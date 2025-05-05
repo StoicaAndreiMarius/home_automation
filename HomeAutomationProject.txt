@@ -1,0 +1,11 @@
+Home automation project
+
+Main objectives:
+    - automatizare jaluzele (preferabil programabile poate chiar si cu aplicatie pe telefon care se conecteaza la bluetooth cu esp32)
+    - automatizare lampa/bec camera
+    - automatizare PC start
+    - automatizare clima(complicat, ar trebui sa analizez cum functioneaza telecomanda de la clima)
+
+
+Side objectives:
+    -automatizare controlata prin aplicatie de mobil pe iOS
