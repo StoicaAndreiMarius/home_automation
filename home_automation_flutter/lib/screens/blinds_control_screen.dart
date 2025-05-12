@@ -1,5 +1,36 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class BlindSchedule {
+  final TimeOfDay time;
+  final double targetHeight;
+  final bool applyToBlind1;
+  final bool applyToBlind2;
+
+  BlindSchedule({
+    required this.time,
+    required this.targetHeight,
+    required this.applyToBlind1,
+    required this.applyToBlind2,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'hour': time.hour,
+    'minute': time.minute,
+    'height': targetHeight,
+    'b1': applyToBlind1,
+    'b2': applyToBlind2,
+  };
+
+  static BlindSchedule fromJson(Map<String, dynamic> json) => BlindSchedule(
+    time: TimeOfDay(hour: json['hour'], minute: json['minute']),
+    targetHeight: json['height'],
+    applyToBlind1: json['b1'],
+    applyToBlind2: json['b2'],
+  );
+}
 
 class BlindsControlScreen extends StatefulWidget {
   const BlindsControlScreen({super.key});
@@ -8,11 +39,103 @@ class BlindsControlScreen extends StatefulWidget {
   State<BlindsControlScreen> createState() => _BlindsControlScreenState();
 }
 
-class _BlindsControlScreenState extends State<BlindsControlScreen> {
+class _BlindsControlScreenState extends State<BlindsControlScreen> with TickerProviderStateMixin {
   double blind1Height = 0;
   double blind2Height = 0;
   bool syncMode = false;
   Timer? _pressTimer;
+  Timer? _scheduleTimer;
+  List<BlindSchedule> schedules = [];
+
+  late AnimationController _blind1Controller;
+  late AnimationController _blind2Controller;
+  late Animation<double> _blind1Animation;
+  late Animation<double> _blind2Animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSchedules();
+    _initAnimations();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startScheduleWatcher());
+  }
+
+  void _initAnimations() {
+    _blind1Controller = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+    _blind2Controller = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+    _blind1Animation = Tween<double>(begin: blind1Height, end: blind1Height).animate(_blind1Controller);
+    _blind2Animation = Tween<double>(begin: blind2Height, end: blind2Height).animate(_blind2Controller);
+  }
+
+  void _animateBlind(String blind, double target) {
+    if (blind == 'Blind 1') {
+      _blind1Animation = Tween<double>(begin: blind1Height, end: target).animate(_blind1Controller)
+        ..addListener(() {
+          setState(() => blind1Height = _blind1Animation.value);
+        });
+      _blind1Controller.forward(from: 0);
+    } else {
+      _blind2Animation = Tween<double>(begin: blind2Height, end: target).animate(_blind2Controller)
+        ..addListener(() {
+          setState(() => blind2Height = _blind2Animation.value);
+        });
+      _blind2Controller.forward(from: 0);
+    }
+  }
+
+  void _startScheduleWatcher() {
+    _scheduleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final now = TimeOfDay.now();
+      for (final s in schedules) {
+        if (now.hour == s.time.hour && now.minute == s.time.minute) {
+          if (s.applyToBlind1 && blind1Height != s.targetHeight) {
+            _animateBlind('Blind 1', s.targetHeight);
+          }
+          if (s.applyToBlind2 && blind2Height != s.targetHeight) {
+            _animateBlind('Blind 2', s.targetHeight);
+          }
+          debugPrint("Executed schedule at ${s.time.format(context)}");
+        }
+      }
+    });
+  }
+
+  double getBlindHeight(String blindName) {
+    return blindName == 'Blind 1' ? blind1Height : blind2Height;
+  }
+
+  void setBlindHeight(String blindName, double height) {
+    setState(() {
+      if (blindName == 'Blind 1') {
+        blind1Height = height;
+      } else {
+        blind2Height = height;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pressTimer?.cancel();
+    _scheduleTimer?.cancel();
+    _blind1Controller.dispose();
+    _blind2Controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSchedules() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getStringList('schedules') ?? [];
+    setState(() {
+      schedules = data.map((s) => BlindSchedule.fromJson(jsonDecode(s))).toList();
+    });
+  }
+
+  Future<void> _saveSchedules() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = schedules.map((s) => jsonEncode(s.toJson())).toList();
+    await prefs.setStringList('schedules', data);
+  }
 
   void _startContinuousAdjust(String blindName, String direction) {
     _pressTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
@@ -71,13 +194,13 @@ class _BlindsControlScreenState extends State<BlindsControlScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     SizedBox(
-                      width: 40, // sau mai puțin dacă vrei să fie mai aproape de slider
+                      width: 40,
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          const Text('☀️', style: TextStyle(fontSize: 24)),
-                          const Text('🌚', style: TextStyle(fontSize: 24)),
+                        children: const [
+                          Text('☀️', style: TextStyle(fontSize: 24)),
+                          Text('🌚', style: TextStyle(fontSize: 24)),
                         ],
                       ),
                     ),
@@ -185,11 +308,97 @@ class _BlindsControlScreenState extends State<BlindsControlScreen> {
     );
   }
 
+  Future<void> _showAddScheduleDialog() async {
+    TimeOfDay selectedTime = TimeOfDay.now();
+    double selectedHeight = 50;
+    bool blind1 = true;
+    bool blind2 = true;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add Blind Schedule'),
+          content: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ElevatedButton(
+                    onPressed: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: selectedTime,
+                      );
+                      if (time != null) {
+                        setState(() => selectedTime = time);
+                      }
+                    },
+                    child: Text('Select Time: ${selectedTime.format(context)}'),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Level: ${selectedHeight.toInt()}%'),
+                  Slider(
+                    value: selectedHeight,
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    onChanged: (val) => setState(() => selectedHeight = val),
+                  ),
+                  CheckboxListTile(
+                    value: blind1,
+                    onChanged: (v) => setState(() => blind1 = v ?? false),
+                    title: const Text('Blind 1'),
+                  ),
+                  CheckboxListTile(
+                    value: blind2,
+                    onChanged: (v) => setState(() => blind2 = v ?? false),
+                    title: const Text('Blind 2'),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (!blind1 && !blind2) return;
+                setState(() {
+                  schedules.add(BlindSchedule(
+                    time: selectedTime,
+                    targetHeight: selectedHeight,
+                    applyToBlind1: blind1,
+                    applyToBlind2: blind2,
+                  ));
+                });
+                _saveSchedules();
+                Navigator.pop(context);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Blinds Control')),
+      appBar: AppBar(
+        title: const Text('Blinds Control'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.schedule),
+            onPressed: _showAddScheduleDialog,
+            tooltip: 'Add Schedule',
+          )
+        ],
+      ),
       body: Column(
         children: [
           Padding(
