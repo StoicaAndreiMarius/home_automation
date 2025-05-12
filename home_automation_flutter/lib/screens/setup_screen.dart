@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/bluetooth_provider.dart';
 
 class SetupScreen extends StatefulWidget {
   final void Function(bool) onThemeChanged;
@@ -12,6 +14,8 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   late bool _localDarkMode;
+  String _connectionStatus = "Not Connected";
+  bool _isConnecting = false;
 
   @override
   void initState() {
@@ -24,6 +28,24 @@ class _SetupScreenState extends State<SetupScreen> {
       _localDarkMode = value;
     });
     widget.onThemeChanged(value);
+  }
+
+  Future<void> _connectToDevice() async {
+    final bluetoothProvider = Provider.of<BluetoothProvider>(context, listen: false);
+
+    setState(() {
+      _isConnecting = true;
+      _connectionStatus = "Connecting...";
+    });
+
+    await bluetoothProvider.connectToDevice();
+
+    setState(() {
+      _isConnecting = false;
+      _connectionStatus = bluetoothProvider.isConnected
+          ? "Connected to Home Automation"
+          : "Connection Failed";
+    });
   }
 
   @override
@@ -50,6 +72,19 @@ class _SetupScreenState extends State<SetupScreen> {
             const Text('2. Look for "Home Automation" in the list of devices.'),
             const Text('3. Tap to pair. Default PIN is 1234 if prompted.'),
             const Text('4. Once connected, you can control it from the app.'),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _isConnecting ? null : _connectToDevice,
+              child: _isConnecting ? const CircularProgressIndicator() : const Text("Connect to Home Automation"),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              _connectionStatus,
+              style: TextStyle(
+                color: _connectionStatus == "Connected to Home Automation" ? Colors.green : Colors.red,
+                fontSize: 16,
+              ),
+            ),
           ],
         ),
       ),
